@@ -1,0 +1,81 @@
+stages:
+  - test_stage
+  - deploy_dev_stage
+
+test_task:
+  services:
+    - mysql:5.5
+    - redis:latest
+  stage: test_stage
+  image: locastic/tests:v16
+  variables:
+    MYSQL_DATABASE: connecto
+    MYSQL_ROOT_PASSWORD: root
+  before_script:
+    - bash .selenium_chrome_chromedriver-ci.sh
+  script:
+    - service elasticsearch start
+    - curl -sS https://getcomposer.org/installer | php
+    - php -d memory_limit=-1 composer.phar install
+    - cp app/config/parameters_test.yml.dist app/config/parameters.yml
+    - php bin/console doctrine:database:create --if-not-exists -e test
+    - php bin/console doctrine:schema:drop -e test --force
+    - php bin/console doctrine:schema:update -e test --force
+    - php bin/console assets:install web -e test
+    - php bin/console sylius:theme:assets:install web -e test
+    - npm install
+    - npm run build
+    - yarn install
+    - yarn run gulp
+    - php bin/console server:run 127.0.0.1:8080 -d web -e test > /dev/null 2>&1 &
+    - echo "Starting BEHAT tests."
+    - cp behat.yml.dist behat.yml
+    - php bin/behat
+    - echo "BEHAT tests done."
+
+deploy_dev_task:
+  stage: deploy_dev_stage
+  image: locastic/deploy:v20
+  before_script:
+    - eval $(ssh-agent -s)
+    - ssh-add <(echo "$SSH_PRIVATE_KEY")
+    - mkdir -p ~/.ssh
+    - echo -e "Host *\n\tStrictHostKeyChecking no\n\n" > ~/.ssh/config
+    - composer install
+    - n lts
+    - npm install
+    - npm run build
+    - gulp admin
+  script:
+    - rsync -rztle 'ssh -p 1338' /builds/locastic/connecto-store/ root@example.locastic.com:/var/www/example.locastic.com/source/$CI_COMMIT_SHA
+    - ssh -tt -p 1338 root@example.locastic.com  "rm /var/www/example.locastic.com/current"
+    - ssh -tt -p 1338 root@example.locastic.com  "ln -sfn /var/www/example.locastic.com/source/$CI_COMMIT_SHA/ /var/www/example.locastic.com/current"
+    - ssh -tt -p 1338 root@example.locastic.com  "ls -d -1tr /var/www/example.locastic.com/source/* | head -n -3 | xargs -d '\n' rm -rf"
+    - ssh -tt -p 1338 root@example.locastic.com  "rm -rf /var/www/example.locastic.com/source/$CI_COMMIT_SHA/app/config/parameters.yml"
+    - ssh -tt -p 1338 root@example.locastic.com  "ln -sfn /var/www/example.locastic.com/shared/app/config/parameters.yml /var/www/example.locastic.com/source/$CI_COMMIT_SHA/app/config/parameters.yml"
+    #- ssh -tt -p 1338 root@example.locastic.com  "rm -rf /var/www/example.locastic.com/source/$CI_COMMIT_SHA/web/media/" #if media folder somehow gets on the repo, delete it before symlinking
+    - ssh -tt -p 1338 root@example.locastic.com  "ln -sfn /var/www/example.locastic.com/shared/web/media/ /var/www/example.locastic.com/source/$CI_COMMIT_SHA/web/media"
+    - ssh -tt -p 1338 root@example.locastic.com  "/var/www/example.locastic.com/current/bin/console doctrine:database:drop  --force -e dev"
+    - ssh -tt -p 1338 root@example.locastic.com  "/var/www/example.locastic.com/current/bin/console doctrine:database:create -e dev"
+    - ssh -tt -p 1338 root@example.locastic.com  "/var/www/example.locastic.com/current/bin/console doctrine:schema:update  --force -e dev"
+    - ssh -tt -p 1338 root@example.locastic.com  "/var/www/example.locastic.com/current/bin/console sylius:fixture:load connecto_suite --no-interaction"
+    - ssh -tt -p 1338 root@example.locastic.com  "/var/www/example.locastic.com/current/bin/console --env=prod --no-debug --ansi assets:install"
+    - ssh -tt -p 1338 root@example.locastic.com  "/var/www/example.locastic.com/current/bin/console --env=prod --no-debug --ansi sylius:theme:assets:install"
+    - ssh -tt -p 1338 root@example.locastic.com  "cd /var/www/example.locastic.com/current && yarn install"
+    - ssh -tt -p 1338 root@example.locastic.com  "cd /var/www/example.locastic.com/current && GULP_ENV=prod yarn run gulp"
+    - ssh -tt -p 1338 root@example.locastic.com  "/var/www/example.locastic.com/current/bin/console fo:el:po -e dev"
+    - ssh -tt -p 1338 root@example.locastic.com  "/var/www/example.locastic.com/current/bin/console cache:warmup -e dev"
+    - ssh -tt -p 1338 root@example.locastic.com  "/var/www/example.locastic.com/current/bin/console cache:warmup -e prod"
+    - ssh -tt -p 1338 root@example.locastic.com  "chown -R www-data:www-data /var/www/example.locastic.com"
+    - ssh -tt -p 1338 root@example.locastic.com  "chmod -R 755 /var/www/example.locastic.com"
+    - ssh -tt -p 1338 root@example.locastic.com  "chmod -R 777 /var/www/example.locastic.com/current/var/cache"
+    - ssh -tt -p 1338 root@example.locastic.com  "chmod -R 777 /var/www/example.locastic.com/current/var/logs"
+    - ssh -tt -p 1338 root@example.locastic.com  "service nginx restart"
+    - ssh -tt -p 1338 root@example.locastic.com  "service php7.1-fpm restart"
+    - echo "Done deploying development branch."
+  environment:
+    name: development
+    url: http://example.locastic.com/
+  when: on_success
+  only:
+    - development
