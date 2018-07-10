@@ -2,7 +2,7 @@
 
 ## Sylius Behat tests (Selenium + Chromedriver + Chrome setup)
 
-### We use our Docker image (locastic/tests:v17) which is basically a **php:7.1** image with added stuff that we need for testing:
+### We use our Docker image (locastic/tests) which is basically a **php:7.1** image with added stuff that we need for testing:
 - node 
 - yarn 
 - elasticsearch 
