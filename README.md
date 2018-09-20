@@ -12,3 +12,7 @@
 - Selenium 3.11.0
 - Chromedriver 2.38
 - Chrome (Latest stable - v67 at this time)
+
+## Support
+
+Want us to help you with this Sylius or Symfony project? Write us an email on info@locastic.com
